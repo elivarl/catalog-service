@@ -83,7 +83,6 @@ La aplicación expone una API REST para la gestión de productos y endpoints de 
 | **GET** | `/api/v1/products/{id}` | Obtiene los detalles de un producto por ID | `200 OK`, `404 Not Found` |
 | **PUT** | `/api/v1/products/{id}` | Actualiza un producto existente | `200 OK`, `404 Not Found` |
 | **DELETE** | `/api/v1/products/{id}` | Elimina un producto por ID | `204 No Content`, `404 Not Found` |
-| **GET** | `/api/v1/products/saludar` | Endpoint de saludo y verificación rápida | `200 OK` |
 | **GET** | `/actuator/health` | Health Check y Probes de salud (AWS ALB / ECS) | `200 OK` |
 
 ### Modelo de Datos del Producto (`Product`)
@@ -117,19 +116,7 @@ curl -X GET http://localhost:8080/actuator/health
 ```
 
 ---
-
-### 4.2 Endpoint de Prueba / Saludo
-```bash
-curl -X GET http://localhost:8080/api/v1/products/saludar
-```
-*Respuesta esperada:*
-```text
-Hola cabroncito
-```
-
----
-
-### 4.3 Crear un Producto (`POST /api/v1/products`)
+### 4.2 Crear un Producto (`POST /api/v1/products`)
 ```bash
 curl -X POST http://localhost:8080/api/v1/products \
   -H "Content-Type: application/json" \
@@ -154,8 +141,7 @@ curl -X POST http://localhost:8080/api/v1/products \
 ```
 
 ---
-
-### 4.4 Listar Todos los Productos (`GET /api/v1/products`)
+### 4.3 Listar Todos los Productos (`GET /api/v1/products`)
 ```bash
 curl -X GET http://localhost:8080/api/v1/products
 ```
@@ -175,7 +161,7 @@ curl -X GET http://localhost:8080/api/v1/products
 
 ---
 
-### 4.5 Obtener Producto por ID (`GET /api/v1/products/{id}`)
+### 4.4 Obtener Producto por ID (`GET /api/v1/products/{id}`)
 ```bash
 curl -X GET http://localhost:8080/api/v1/products/1
 ```
@@ -195,7 +181,7 @@ curl -X GET http://localhost:8080/api/v1/products/999
 
 ---
 
-### 4.6 Actualizar un Producto (`PUT /api/v1/products/{id}`)
+### 4.5 Actualizar un Producto (`PUT /api/v1/products/{id}`)
 ```bash
 curl -X PUT http://localhost:8080/api/v1/products/1 \
   -H "Content-Type: application/json" \
@@ -210,7 +196,7 @@ curl -X PUT http://localhost:8080/api/v1/products/1 \
 
 ---
 
-### 4.7 Eliminar un Producto (`DELETE /api/v1/products/{id}`)
+### 4.6 Eliminar un Producto (`DELETE /api/v1/products/{id}`)
 ```bash
 curl -X DELETE http://localhost:8080/api/v1/products/1
 ```
@@ -218,30 +204,16 @@ curl -X DELETE http://localhost:8080/api/v1/products/1
 
 ---
 
-## ⚙️ 5. Variables de Entorno Configurables
+## 🛠️ 5. Instrucciones para Levantado Local
 
-El proyecto utiliza variables de entorno compatibles tanto con desarrollo local como con servicios de AWS (RDS, Parameter Store, Secrets Manager o variables de contenedor ECS):
-
-| Variable | Valor por Defecto | Descripción |
-| :--- | :--- | :--- |
-| `PORT` | `8080` | Puerto en el que escucha la aplicación |
-| `SPRING_DATASOURCE_URL` | `jdbc:mysql://localhost:3306/catalog_db?...` | Cadena JDBC de conexión a MySQL / AWS RDS |
-| `SPRING_DATASOURCE_USERNAME` | `root` | Usuario de la base de datos |
-| `SPRING_DATASOURCE_PASSWORD` | `root` | Contraseña de la base de datos |
-| `SPRING_PROFILES_ACTIVE` | `prod` | Perfil de configuración activo (`dev` o `prod`) |
-
----
-
-## 🛠️ 6. Instrucciones para Levantado Local
-
-### 6.1 Prerrequisitos
+### 5.1 Prerrequisitos
 - **Java Development Kit (JDK)**: Versión 21 instalada (`java -version`).
 - **Base de Datos MySQL**: Instancia local o contenedor Docker en el puerto `3306`.
 - **Git** instalado.
 
 ---
 
-### 6.2 Levantar la Base de Datos con Docker (Recomendado)
+### 5.2 Levantar la Base de Datos con Docker (Recomendado)
 Para disponer rápidamente de una base de datos MySQL 8 local:
 
 ```bash
@@ -255,7 +227,7 @@ docker run -d \
 
 ---
 
-### 6.3 Compilar y Empaquetar el Proyecto
+### 5.3 Compilar y Empaquetar el Proyecto
 
 En **Windows (PowerShell / CMD)**:
 ```cmd
@@ -272,7 +244,7 @@ Esto generará el archivo `.jar` ejecutable dentro de la carpeta `target/`:
 
 ---
 
-### 6.4 Ejecución de la Aplicación
+### 5.4 Ejecución de la Aplicación
 
 #### Opción A: Ejecutar mediante Maven Wrapper (Entorno de Desarrollo)
 Con perfil `dev` activado (muestra logs SQL detallados):
@@ -300,27 +272,3 @@ export SPRING_DATASOURCE_PASSWORD="MiPasswordSegura"
 export PORT=8080
 
 java -jar target/catalog-0.0.1-SNAPSHOT.jar
-```
-
----
-
-## ☁️ 7. Guía para el Pipeline de Despliegue en AWS & GitHub Actions
-
-Para implementar el laboratorio CI/CD:
-
-1. **Configuración de Secretos en GitHub** (`Settings -> Secrets and variables -> Actions`):
-   - `AWS_ACCESS_KEY_ID`: Credenciales IAM con permisos para ECR / ECS.
-   - `AWS_SECRET_ACCESS_KEY`: Clave secreta IAM.
-   - `AWS_REGION`: Región destino (ejemplo: `us-east-1`).
-   - `ECR_REPOSITORY`: Nombre del repositorio en Amazon ECR.
-   - `RDS_ENDPOINT`: Host de la base de datos MySQL en AWS RDS.
-   - `RDS_PASSWORD`: Contraseña de acceso a la base de datos.
-
-2. **Ejemplo de Pasos en GitHub Actions (`.github/workflows/deploy.yml`)**:
-   - **Checkout**: Descarga el código del repositorio.
-   - **Set up JDK 21**: Configura el entorno Java con `actions/setup-java`.
-   - **Maven Build**: Ejecuta `mvn clean package`.
-   - **Docker Build & Tag**: Construye la imagen del microservicio.
-   - **Login & Push ECR**: Autentica y sube la imagen a Amazon Elastic Container Registry.
-   - **Deploy**: Actualiza la tarea o servicio en AWS (ECS / App Runner / EC2).
-   - **Healthcheck**: Verifica disponibilidad consumiendo `/actuator/health`.

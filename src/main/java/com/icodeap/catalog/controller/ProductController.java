@@ -46,9 +46,4 @@ public class ProductController {
         productService.deleteProduct(id);
         return ResponseEntity.noContent().build();
     }
-
-    @GetMapping("/saludar")
-    public String saludar(){
-        return "Hola cabroncito";
-    }
 }
