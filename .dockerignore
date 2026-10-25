@@ -1,0 +1,6 @@
+target/
+.git/
+.github/
+.aws/
+.idea/
+*.iml
