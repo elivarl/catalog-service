@@ -462,8 +462,6 @@ docker build --platform linux/amd64 -t catalog:v1 . (solo si es mac)
 
 docker build -t <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1 .
 
-docker tag catalog:v1 <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1
-
 docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1
 ```
 
