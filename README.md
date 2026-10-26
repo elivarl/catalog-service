@@ -450,3 +450,20 @@ Esta sección proporciona una guía conceptual y práctica exhaustiva de cada se
   - **Seguridad Moderna y Profesional (Sin Llaves Estáticas)**: Elimina la necesidad de almacenar `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` de larga duración en los secretos del repositorio de GitHub.
   - **Autenticación Temporal**: Al iniciar el workflow, GitHub genera un token OIDC criptográficamente firmado. AWS IAM valida la firma con el emisor (`token.actions.githubusercontent.com`) y entrega credenciales temporales de sesión válidas por unos minutos mediante la acción `aws-actions/configure-aws-credentials`.
   - **Control de Acceso Basado en Repositorio**: La política de confianza (*Trust Policy*) de IAM puede restringir el acceso exclusivamente al repositorio y rama del laboratorio (ej. `repo:usuario/catalog:ref:refs/heads/main`), asegurando que ningún otro repositorio pueda asumir el rol.
+
+---
+
+## 🐳 7. Cómo Subir la Imagen a Amazon ECR
+
+```bash
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
+
+docker build --platform linux/amd64 -t catalog:v1 . (solo si es mac) 
+
+docker build -t <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1 .
+
+docker tag catalog:v1 <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1
+
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1
+```
+
