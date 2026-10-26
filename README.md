@@ -368,13 +368,13 @@ Esta sección proporciona una guía conceptual y práctica exhaustiva de cada se
   Son cortafuegos (*firewalls*) virtuales con estado (*stateful*) que actúan a nivel de interfaz de red elástica (ENI). Filtran el tráfico entrante (*inbound*) y saliente (*outbound*) basándose en protocolos, puertos y orígenes IP o referencias cruzadas entre grupos de seguridad.
 - **¿Para qué se usa en el laboratorio?**:
   Implementar la arquitectura de seguridad por capas (**Defensa en Profundidad**) garantizando que ningún componente esté expuesto innecesariamente:
-  1. **Security Group del ALB (`sg-catalog-alb`)**:
+  1. **Security Group del ALB (`alb-catalog-service-sg`)**:
      - *Inbound*: Puerto `80` (HTTP) abierto a todo Internet (`0.0.0.0/0`).
      - *Outbound*: Todo el tráfico saliente permitido hacia las tareas ECS.
-  2. **Security Group de las Tareas ECS Fargate (`sg-catalog-ecs`)**:
+  2. **Security Group de las Tareas ECS Fargate (`app-catalog-service-sg`)**:
      - *Inbound*: Puerto `8080` (Spring Boot) permitido **únicamente** desde el Security Group del ALB (`sg-catalog-alb`). No tiene acceso directo desde Internet.
      - *Outbound*: Hacia RDS en el puerto `3306`, y hacia Internet (mediante NAT Gateway o endpoints) para descargar imágenes de ECR y enviar logs a CloudWatch.
-  3. **Security Group de la Base de Datos RDS MySQL (`sg-catalog-rds`)**:
+  3. **Security Group de la Base de Datos RDS MySQL (`db-catalog-service-sg`)**:
      - *Inbound*: Puerto `3306` (MySQL) permitido **exclusivamente** desde el Security Group de las Tareas ECS (`sg-catalog-ecs`). El acceso desde Internet está estrictamente bloqueado.
 
 ---
@@ -832,8 +832,8 @@ Para evitar consumos no deseados en la cuenta de AWS una vez completada la prác
 
 El repositorio incluye manuales paso a paso exhaustivos creados para guiar tanto la configuración inicial como la automatización:
 
-- 📖 [**Guía Manual en Consola: ECR + ECS Fargate + ALB**](file:///D:/icodeap/code/prod/catalog/guia-consola-ecr-ecs-alb2_6.md):  
+- 📖 [**Guía Manual en Consola: ECR + ECS Fargate + ALB**](Guia-consola-ecr-ecs-alb2.6.md):
   Manual detallado para el aprovisionamiento manual de toda la infraestructura AWS (ECR, VPC Security Groups, SSM Parameter Store, RDS MySQL, Target Group, ALB, ECS Clúster, Roles de IAM y federación OIDC).
-- 🚀 [**Guía del Pipeline Completo de CI/CD**](file:///D:/icodeap/code/prod/catalog/guia-pipeline-completo-modulo5_2.md):  
+- 🚀 [**Guía del Pipeline Completo de CI/CD**](Guia-pipeline-5.2.md):
   Manual paso a paso para la construcción modular del workflow en GitHub Actions (Jobs `test`, `build-and-push` y `deploy`, configuración de Environments, Secrets, Smoke Tests y escenarios de prueba de fallos intencionales).
 
