@@ -53,60 +53,76 @@ graph TD
 
 ### 2.3 Flujo de Despliegue CI/CD (GitHub Actions + AWS)
 
-El siguiente diagrama detalla la interacción integral entre el pipeline automatizado en **GitHub Actions** y los diferentes servicios de **AWS** aprovisionados para el despliegue del microservicio:
+El siguiente diagrama detalla la interacción integral entre el pipeline automatizado en **GitHub Actions** (estructurado en 3 jobs secuenciales con validación OIDC) y la infraestructura completa en **AWS** (ECR, ECS Fargate, ALB, CloudWatch, Parameter Store y RDS MySQL) aprovisionada para el microservicio:
 
 ```mermaid
 flowchart TD
-    subgraph RepoGH["🐙 GitHub & Pipeline CI/CD"]
-        Dev["👨‍💻 Desarrollador"] -->|git push main| Repo["Repositorio GitHub"]
-        Repo -->|Trigger Workflow| GHActions["⚙️ GitHub Actions Runner"]
-        GHActions --> Build["☕ Build & Unit Tests (Maven Java 21)"]
-        Build --> DockerBuild["🐳 Build Imagen Docker (Dockerfile multi-stage)"]
+    subgraph RepoGH["🐙 GitHub y Pipeline CI/CD (3 Jobs Automatizados)"]
+        Dev["👨‍💻 Desarrollador"] -->|git push main o Pull Request| Repo["Repositorio GitHub"]
+        Repo -->|Trigger en PR y Push a main| JobTest["🧪 Job 1: test<br/>Maven verify + Contenedor MySQL 8.4"]
+        
+        JobTest -->|Solo en push a main exitoso| JobBuild["🐳 Job 2: build-and-push<br/>Docker build multi-stage linux/amd64"]
+        
+        JobBuild -->|Imagen generada con commit SHA| JobDeploy["🚀 Job 3: deploy<br/>Environment: production"]
     end
 
-    subgraph AuthAWS["🔐 Autenticación Federada"]
-        GHActions -->|1. Solicita Token JWT| OIDC["🔑 GitHub OIDC Provider"]
-        OIDC -->|2. Asume Rol temporal vía STS| IAMRole["🛡️ IAM Role (GitHub Actions)"]
+    subgraph AuthAWS["🔐 Autenticación Federada OIDC y AWS STS"]
+        JobBuild -->|1. Token JWT para rama main| OIDC["🔑 GitHub OIDC Provider"]
+        JobDeploy -->|2. Token JWT para environment production| OIDC
+        OIDC -->|sts AssumeRoleWithWebIdentity| IAMRole["🛡️ IAM Role: github-actions-catalog-service<br/>Policy: desplegar-catalog-service"]
     end
 
-    subgraph Registry["📦 Registro de Contenedores"]
-        DockerBuild -->|3. Docker Push con Commit SHA| ECR["📦 Amazon ECR (catalog-service)"]
+    subgraph Registry["📦 Registro Inmutable de Contenedores"]
+        JobBuild -->|3. Docker push con etiqueta SHA| ECR["📦 Amazon ECR: catalog-service<br/>Tag Immutability Activado"]
     end
 
-    subgraph Compute["🚀 Orquestación & Cómputo (AWS ECS Fargate)"]
-        IAMRole -->|4. Renderiza nueva versión| TaskDef["📋 ECS Task Definition"]
-        TaskDef -->|5. Actualiza servicio| ECSService["⚙️ ECS Service"]
-        ECSService -->|Descarga imagen| ECR
-        ECSService -->|Asume rol de ejecución| ExecRole["🛡️ IAM Task Execution Role"]
-        ExecRole -->|Inyecta credenciales DB| SSM["🔐 AWS Systems Manager (Parameter Store)"]
-        ECSService -->|Envía logs estándar| CW["📊 Amazon CloudWatch Logs"]
-        ECSService -->|Instancia tarea Fargate| Container["📦 Contenedor Spring Boot (:8080)"]
+    subgraph Compute["☁️ Cómputo y Orquestación (AWS ECS Fargate)"]
+        JobDeploy -->|4. Inyecta imagen SHA en task-definition.json| TaskDef["📋 ECS Task Definition<br/>catalog-service - 0.5 vCPU / 1GB RAM"]
+        TaskDef -->|5. Actualiza servicio con Rolling Update| ECSService["⚙️ ECS Service: catalog-service<br/>Clúster: catalog-service-cluster"]
+        
+        ECSService -->|Descarga imagen por commit SHA| ECR
+        ECSService -->|Asume rol de ejecución al arrancar| ExecRole["🛡️ IAM Role: ecsTaskExecutionRole"]
+        ExecRole -->|Inyecta parámetro db-password| SSM["🔐 SSM Parameter Store<br/>/catalog-service/db-password"]
+        ECSService -->|Canaliza logs stdout y stderr| CW["📊 CloudWatch Logs<br/>/ecs/catalog-service"]
+        
+        ECSService -->|Despliega nueva tarea saludable| ContainerNew["📦 Contenedor Nuevo: app<br/>Spring Boot en puerto 8080"]
+        ECSService -.->|Drena conexiones y apaga ordenadamente| ContainerOld["📦 Contenedor Anterior"]
     end
 
-    subgraph Traffic["🌐 Entrada & Balanceo de Tráfico"]
-        User["🌍 Cliente / API Consumer"] -->|HTTP :80| ALB["⚖️ Application Load Balancer (ALB)"]
-        ALB -->|Enruta tráfico activo| TG["🎯 Target Group"]
-        TG -->|Health Check :8080/actuator/health| Container
+    subgraph Traffic["🌐 Entrada, Balanceo y Verificación Externa"]
+        User["🌍 Cliente / Consumidor API"] -->|Petición HTTP puerto 80| ALB["⚖️ Application Load Balancer: alb-catalog-service"]
+        ALB -->|Enruta tráfico activo| TG["🎯 Target Group: tg-catalog-service<br/>Target Type: IP - Port: 8080"]
+        TG -->|Health check continuo a /actuator/health| ContainerNew
+        
+        JobDeploy -.->|6. Smoke Test post-deploy con curl| ALB
     end
 
-    subgraph Data["🗄️ Capa de Datos Persistente"]
-        Container -->|JDBC :3306| RDS[("🗄️ Amazon RDS MySQL (catalog_db)")]
+    subgraph Data["🗄️ Capa de Persistencia"]
+        ContainerNew -->|Conexión JDBC puerto 3306| RDS[("🗄️ Amazon RDS MySQL: database-dev<br/>Base de Datos: products - Usuario: admin")]
     end
 
-    subgraph Security["🛡️ Aislamiento de Red (Security Groups)"]
-        SG_ALB["🔒 SG ALB<br/>(Inbound: :80 0.0.0.0/0)"] -.->|Permite tráfico| SG_ECS["🔒 SG ECS Tasks<br/>(Inbound: :8080 from SG ALB)"]
-        SG_ECS -.->|Permite tráfico MySQL| SG_RDS["🔒 SG RDS MySQL<br/>(Inbound: :3306 from SG ECS)"]
+    subgraph Security["🛡️ Aislamiento de Red por Capas (Security Groups)"]
+        SG_ALB["🔒 alb-catalog-service-sg<br/>Inbound: puerto 80 abierto"] -.->|Permite tráfico en puerto 8080| SG_ECS["🔒 app-catalog-service-sg<br/>Inbound: puerto 8080 solo desde SG ALB"]
+        SG_ECS -.->|Permite tráfico MySQL puerto 3306| SG_RDS["🔒 db-catalog-service-sg<br/>Inbound: puerto 3306 solo desde SG ECS"]
     end
 ```
 
 #### Fases del Ciclo de Vida del Despliegue:
 
-1. **Integración Continua (CI)**: El desarrollador realiza un `push` a la rama principal. GitHub Actions compila el proyecto con Maven (Java 21), ejecuta pruebas unitarias y construye la imagen Docker optimizada mediante capas (*multi-stage*).
-2. **Autenticación sin Secretos Estáticos (OIDC)**: GitHub Actions solicita un token OIDC efímero y asume un rol de IAM en AWS (`sts:AssumeRoleWithWebIdentity`), evitando el riesgo de exponer credenciales estáticas de larga duración (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
-3. **Publicación en Amazon ECR**: La imagen Docker etiquetada con el SHA del commit se autentica y sube al repositorio privado de **Amazon ECR**.
-4. **Despliegue Continuo (CD) en ECS Fargate**: El pipeline genera una nueva revisión de la **Task Definition** con la URI de la imagen recién publicada y actualiza el **ECS Service**. Fargate levanta una nueva tarea, consulta las credenciales de base de datos en **AWS Systems Manager (SSM)** y canaliza los logs hacia **Amazon CloudWatch**.
-5. **Drenado y Balanceo de Carga (ALB & Target Group)**: El **Target Group** sondea el endpoint de salud `/actuator/health`. Una vez la nueva tarea responde favorablemente (`HTTP 200 OK`), el balanceador redirige el tráfico hacia la nueva versión y apaga ordenadamente la anterior sin interrupción para los usuarios (*Zero Downtime Rolling Update*).
-6. **Seguridad en Red**: Los **Security Groups** restringen el tráfico entre capas: las tareas Fargate sólo aceptan tráfico originado desde el balanceador (puerto 8080) y la base de datos **RDS MySQL** únicamente acepta conexiones originadas desde las tareas ECS (puerto 3306).
+1. **Validación y Pruebas Automatizadas en CI (`test`)**: Se dispara en cada Pull Request y en cada `push` a la rama principal (`main`). El runner de GitHub Actions aprovisiona un contenedor de servicio efímero de **MySQL 8.4** (`mysql:8.4`) y ejecuta `./mvnw verify`, garantizando que todas las pruebas unitarias y de persistencia se ejecuten contra un motor real sin tocar la nube de AWS ni dejar infraestructura huérfana.
+2. **Autenticación Federada OIDC de Mínimo Privilegio**: GitHub Actions genera tokens web JSON (JWT) efímeros y firmados criptográficamente. Se valida el *Subject* (`sub`) exacto para cada etapa:
+   - Para `build-and-push`: restringido a la rama `repo:USUARIO/REPO:ref:refs/heads/main`.
+   - Para `deploy`: restringido al entorno `repo:USUARIO/REPO:environment:production`.
+   AWS STS valida la firma mediante el proveedor OIDC y entrega credenciales temporales de sesión para el rol `github-actions-catalog-service`, eliminando completamente la necesidad de secretos estáticos (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+3. **Construcción y Publicación Inmutable en Amazon ECR (`build-and-push`)**: Utilizando `docker/buildx` y `docker/build-push-action`, se construye la imagen para arquitectura `linux/amd64` y se publica en el repositorio privado de **Amazon ECR** (`catalog-service`). La imagen se etiqueta unívocamente con el SHA completo del commit (`${{ github.sha }}`). La política de **Tag Immutability** garantiza que ninguna imagen pueda sobrescribirse, permitiendo auditorías y *rollbacks* exactos y deterministas.
+4. **Renderizado de Task Definition y Despliegue Progresivo (`deploy`)**: El job descarga el blueprint [`.aws/task-definition.json`](file:///D:/icodeap/code/prod/catalog/.aws/task-definition.json), inyecta la URI de la imagen recién publicada en el contenedor `app` y registra una nueva revisión en ECS. A continuación, actualiza el servicio `catalog-service` en el clúster `catalog-service-cluster`.
+5. **Arranque Seguro en Fargate e Inyección de Secretos**: La nueva tarea se levanta en modo Serverless (0.5 vCPU / 1 GB RAM). El rol de ejecución `ecsTaskExecutionRole` descarga la imagen de ECR, lee de forma segura la contraseña desde **AWS Systems Manager Parameter Store** (`/catalog-service/db-password`) y la inyecta como variable de entorno `SPRING_DATASOURCE_PASSWORD` en la JVM sin exponerla en texto claro en repositorios ni consolas. Los logs estándar se canalizan hacia **CloudWatch Logs** (`/ecs/catalog-service`).
+6. **Zero-Downtime Rolling Update y Circuit Breaker**: El **Target Group** (`tg-catalog-service`) sondea el probe de salud `/actuator/health` en el puerto `8080`. Mientras la JVM arranca y responde `HTTP 200 OK`, el balanceador (`alb-catalog-service`) continúa sirviendo el 100% del tráfico a la tarea previa. Una vez declarada sana, el balanceador redirige el tráfico hacia la nueva tarea y drena gradualmente las conexiones activas de la versión anterior antes de apagarla. Si la nueva versión falla al arrancar, el mecanismo de **Deployment Circuit Breaker** de ECS revierte el despliegue a la última revisión estable.
+7. **Smoke Test Automatizado Post-Despliegue**: Tras alcanzar la estabilidad del servicio (`wait-for-service-stability: true`), GitHub Actions ejecuta un bucle de comprobación externa mediante `curl` contra la URL pública del balanceador (`http://${{ vars.ALB_DNS }}/actuator/health`). El pipeline solo se marca como exitoso si la aplicación responde operativamente desde Internet.
+8. **Seguridad y Segmentación de Red por Capas**: El tráfico se controla rigurosamente mediante tres **Security Groups** acoplados:
+   - `alb-catalog-service-sg`: Permite tráfico HTTP público en el puerto 80.
+   - `app-catalog-service-sg`: Permite tráfico en el puerto 8080 **únicamente** originado desde el Security Group del ALB.
+   - `db-catalog-service-sg`: Permite conexiones en el puerto 3306 **únicamente** originadas desde el Security Group de las tareas ECS. Ninguna entidad externa o pública puede conectarse directamente a la base de datos RDS.
 
 ---
 
@@ -453,15 +469,371 @@ Esta sección proporciona una guía conceptual y práctica exhaustiva de cada se
 
 ---
 
-## 🐳 7. Cómo Subir la Imagen a Amazon ECR
+### 6.3 Convenciones y Nomenclatura Estándar del Laboratorio
+
+Para garantizar la coherencia absoluta entre la infraestructura aprovisionada en AWS, la configuración de Spring Boot y el pipeline de GitHub Actions, se utilizan los siguientes identificadores canónicos:
+
+| Recurso / Componente | Nombre / Valor Estándar | Ámbito y Relevancia |
+| :--- | :--- | :--- |
+| **Región de AWS** | `us-east-1` (N. Virginia) | Consola AWS, AWS CLI y variable `AWS_REGION` del pipeline |
+| **Repositorio ECR** | `catalog-service` | Almacén privado de imágenes Docker (con *Tag Immutability* activo) |
+| **Clúster ECS** | `catalog-service-cluster` | Clúster Serverless de AWS Fargate |
+| **Servicio ECS** | `catalog-service` | Orquestador de tareas Fargate con despliegue en Rolling Update |
+| **Nombre del Contenedor** | `app` | Identificador en [`.aws/task-definition.json`](file:///D:/icodeap/code/prod/catalog/.aws/task-definition.json) y variable `CONTAINER_NAME` en CI/CD |
+| **Familia de Task Definition** | `catalog-service` | Definición de tarea versionada en ECS |
+| **Security Groups** | `alb-catalog-service-sg`<br/>`app-catalog-service-sg`<br/>`db-catalog-service-sg` | Cortafuegos en 3 capas de aislamiento: ALB (80) → Fargate (8080) → RDS (3306) |
+| **Target Group** | `tg-catalog-service` | Tipo IP, puerto 8080, health check en `/actuator/health` |
+| **Application Load Balancer** | `alb-catalog-service` | Balanceador público HTTP en puerto 80 conectado a Internet |
+| **Grupo de Logs CloudWatch** | `/ecs/catalog-service` | Destino de logs stdout/stderr bajo el driver `awslogs` |
+| **Parámetro SSM (Parameter Store)** | `/catalog-service/db-password` | Tipo `SecureString` con la contraseña de la base de datos |
+| **Instancia RDS MySQL** | `database-dev` | Instancia administrada de MySQL 8.x en subred privada |
+| **Base de Datos Inicial** | `products` | Nombre de la base de datos creada en RDS |
+| **Usuario Maestro RDS** | `admin` | Usuario administrador de la base de datos |
+| **Rol de Ejecución ECS** | `ecsTaskExecutionRole` | Rol para Fargate con permisos para ECR, CloudWatch y lectura de SSM |
+| **Rol IAM para GitHub Actions** | `github-actions-catalog-service` | Rol asumido vía OIDC con la política `desplegar-catalog-service` |
+| **GitHub Environment** | `production` | Entorno en GitHub para gobernar el job `deploy` y OIDC |
+| **Variable de Repositorio** | `ALB_DNS` | DNS público del ALB (sin `http://`) para el Smoke Test automatizado |
+| **Secreto de Repositorio** | `AWS_ROLE_ARN` | ARN del rol IAM asumido por GitHub Actions mediante OIDC |
+
+---
+
+## 🐳 7. Cómo Subir la Imagen Inicial a Amazon ECR (Bootstrap Manual)
+
+Antes de activar el pipeline automatizado, es necesario subir manualmente una primera imagen (`catalog-service:v1`) para permitir que el servicio ECS arranque por primera vez durante la configuración de infraestructura (Paso 1 de la [guia-consola-ecr-ecs-alb2_6.md](file:///D:/icodeap/code/prod/catalog/guia-consola-ecr-ecs-alb2_6.md)):
 
 ```bash
+# 1. Autenticarse contra el registro privado de Amazon ECR
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
 
-docker build --platform linux/amd64 -t catalog:v1 . (solo si es mac) 
+# 2. Compilar la imagen Docker para la arquitectura x86_64 requerida por Fargate
+docker build --platform linux/amd64 -t catalog-service:v1 . (solo si es mac)
 
-docker build -t <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1 .
+docker build -t <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog-service:v1 .
 
-docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog:v1
+# 3. Publicar la imagen inicial en Amazon ECR
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog-service:v1
 ```
+
+> [!NOTE]
+> Se utiliza la etiqueta `:v1` y no `:latest` porque el repositorio ECR tiene activado **Tag Immutability**. Una vez completado este arranque inicial, todas las publicaciones subsiguientes las gestiona automáticamente el pipeline de GitHub Actions etiquetando con el commit SHA (`${{ github.sha }}`).
+
+---
+
+## ⚙️ 8. Especificación del Pipeline CI/CD Automatizado (`.github/workflows/ci-cd.yml`)
+
+El pipeline completo de integración y despliegue continuo se organiza en **tres jobs independientes y secuenciales**, siguiendo las mejores prácticas de seguridad, aislamiento de permisos y verificación de extremo a extremo:
+
+```yaml
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: catalog-service
+  ECS_CLUSTER: catalog-service-cluster
+  ECS_SERVICE: catalog-service
+  CONTAINER_NAME: app
+  TASK_DEFINITION: .aws/task-definition.json
+
+jobs:
+  # =========================================================================
+  # JOB 1: Compilación y Pruebas Unitarias/Integración con MySQL Aislado
+  # =========================================================================
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-pass
+          MYSQL_DATABASE: products
+          MYSQL_USER: app
+          MYSQL_PASSWORD: ci-app-pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-pass --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      SPRING_DATASOURCE_URL: jdbc:mysql://localhost:3306/products?allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: ci-app-pass
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Pruebas automatizadas
+        run: ./mvnw -B verify
+
+  # =========================================================================
+  # JOB 2: Construcción de Imagen Docker y Publicación Inmutable en Amazon ECR
+  # =========================================================================
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Autenticación en AWS mediante OIDC (Rama main)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Generar URI de Imagen con Commit SHA
+        id: meta
+        run: echo "image=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Construir y Publicar Imagen Docker
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          provenance: false
+
+  # =========================================================================
+  # JOB 3: Renderizado de Task Definition, Rolling Update en ECS y Smoke Test
+  # =========================================================================
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Autenticación en AWS mediante OIDC (Entorno production)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Inyectar nueva imagen en Task Definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build-and-push.outputs.image }}
+
+      - name: Desplegar en Amazon ECS (Fargate)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 10
+
+      - name: Smoke Test post-despliegue (Verificación ALB)
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS -m 5 "http://${{ vars.ALB_DNS }}/actuator/health" | grep -q '"status":"UP"'; then
+              echo "✅ Despliegue validado exitosamente: la aplicación responde UP a través del ALB."
+              exit 0
+            fi
+            echo "Intento $i: esperando respuesta satisfactoria del ALB..."
+            sleep 10
+          done
+          echo "❌ Error: El Smoke Test falló después de 12 intentos."
+          exit 1
+```
+
+---
+
+## 📋 9. Blueprint de la ECS Task Definition (`.aws/task-definition.json`)
+
+La definición de tarea para ECS Fargate se almacena en el control de versiones bajo [`.aws/task-definition.json`](file:///D:/icodeap/code/prod/catalog/.aws/task-definition.json). Se define limpia y desacoplada de metadatos de solo lectura de AWS para facilitar su renderizado dinámico en CI/CD:
+
+```json
+{
+  "family": "catalog-service",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "app",
+      "image": "<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog-service:v1",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "SPRING_DATASOURCE_URL", "value": "jdbc:mysql://<RDS_ENDPOINT>:3306/products" },
+        { "name": "SPRING_DATASOURCE_USERNAME", "value": "admin" }
+      ],
+      "secrets": [
+        {
+          "name": "SPRING_DATASOURCE_PASSWORD",
+          "valueFrom": "arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/catalog-service/db-password"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/catalog-service",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+```
+
+> [!IMPORTANT]
+> - **Dimensionamiento de Memoria**: Se configuran `1024 MB` de RAM y `512` de CPU (0.5 vCPU). Asignar solo 512 MB a Spring Boot suele provocar la terminación abrupta del proceso por el OOM-Killer de Linux (`Exit Code 137`).
+> - **Inyección de Secretos**: La directiva `secrets` delega en el agente de Fargate la tarea de leer y descifrar el parámetro desde SSM Parameter Store al momento de crear el contenedor, mapeándolo a la variable de entorno `SPRING_DATASOURCE_PASSWORD`.
+
+---
+
+## 🐳 10. Entorno Local Completo con Docker Compose
+
+Para replicar localmente la misma arquitectura y validar el microservicio antes de cualquier interacción con AWS, se utiliza un archivo [`docker-compose.yml`](file:///D:/icodeap/code/prod/catalog/docker-compose.yml) en la raíz:
+
+```yaml
+services:
+  db:
+    image: mysql:8.4
+    container_name: catalog-service-db
+    environment:
+      MYSQL_ROOT_PASSWORD: local-root-pass
+      MYSQL_DATABASE: products
+      MYSQL_USER: app
+      MYSQL_PASSWORD: local-app-pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - catalog-service-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    container_name: catalog-service-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/products?allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: local-app-pass
+    ports:
+      - "8080:8080"
+
+volumes:
+  catalog-service-db-data:
+```
+
+### Comandos de Ejecución y Validación Local:
+```bash
+# Iniciar servicios con compilación de contenedor
+docker compose up --build
+
+# Verificar que el health check responda UP
+curl -i http://localhost:8080/actuator/health
+
+# Comprobar la creación automática de tablas en MySQL por Hibernate
+docker exec catalog-service-db mysql -uapp -plocal-app-pass products -e "SHOW TABLES;"
+
+# Detener los servicios
+docker compose down
+```
+
+---
+
+## 🔍 11. Matriz de Diagnóstico y Errores Frecuentes (Troubleshooting)
+
+Esta tabla condensa las incidencias más comunes documentadas durante las fases de configuración manual y ejecución en CI/CD:
+
+| Síntoma o Error | Causa Raíz Probable | Solución Comprobada |
+| :--- | :--- | :--- |
+| `mvnw: Permission denied` | En entornos Windows, el wrapper de Maven pierde el bit de ejecución en Git al confirmarse. | Ejecutar en terminal: `git update-index --chmod=+x mvnw`, realizar commit y push. |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Desajuste en el `sub` de la *Trust Policy* del rol de IAM (repositorios creados con formato `@OWNER_ID/@REPO_ID` vs clásico, mayúsculas en `USUARIO/REPO`, o discrepancia en el nombre del environment `production`). | Verificar la condición `StringLike` en el rol IAM. Obtener los IDs reales con `gh api repos/USUARIO/REPO --jq "{repo_id: .id, owner_id: .owner.id}"` y ajustar la política. |
+| `ImageTagAlreadyExistsException` | Se ejecutó *Re-run all jobs* en GitHub Actions para un commit ya publicado con *Tag Immutability* activo en ECR. | Utilizar *Re-run failed jobs* (para reintentar únicamente el paso fallido reutilizando la imagen ya subida) o generar un nuevo commit. |
+| `ResourceInitializationError: unable to pull secrets` | El rol `ecsTaskExecutionRole` carece de permisos de lectura sobre SSM Parameter Store. | Agregar la *inline policy* `leer-secretos-catalog-service` con la acción `ssm:GetParameters` sobre el recurso exacto `arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/catalog-service/*`. |
+| `Communications link failure` | El contenedor Spring Boot intentó conectar a MySQL antes de que estuviera listo, o usó `localhost` dentro de una red de contenedores. | En local/CI, asegurar el `healthcheck` de MySQL y usar el nombre del host adecuado (`db` o `localhost` según aplique). En AWS, verificar que el Security Group de RDS acepte tráfico desde el Security Group de ECS en el puerto 3306. |
+| `Target is in an Availability Zone that is not enabled for the load balancer` | El servicio ECS fue configurado con subredes de zonas de disponibilidad donde el ALB no tiene presencia. | Editar la configuración de red del servicio ECS para que sus subredes coincidan estrictamente con las zonas asignadas al ALB. |
+| Tarea de ECS terminada con `Exit Code 137` | La JVM superó el límite de memoria RAM configurado en Fargate (OOM Killer). | Incrementar la memoria en la Task Definition a `1024 MB` y mantener `-XX:MaxRAMPercentage=75` en el `ENTRYPOINT`. |
+| `Task definition file does not exist: .aws/task-definition.json` | La carpeta se nombró `aws` sin el punto inicial, o no se incluyó el paso `actions/checkout` en el job `deploy`. | Renombrar la carpeta exactamente a `.aws` y asegurar `actions/checkout@v6` en el job. |
+
+---
+
+## 🧹 12. Procedimiento de Limpieza y Control de Costos (Teardown)
+
+Para evitar consumos no deseados en la cuenta de AWS una vez completada la práctica, se debe ejecutar la destrucción ordenada en la siguiente secuencia lógica:
+
+1. **Escalar el Servicio ECS a 0 tareas**:
+   - ECS → Clúster `catalog-service-cluster` → Servicio `catalog-service` → *Update service* → cambiar *Desired tasks* a `0`.
+2. **Eliminar el Servicio ECS**:
+   - Una vez las tareas se detengan, seleccionar el servicio y pulsar *Delete service*.
+3. **Inactivar las Task Definitions**:
+   - ECS → *Task definitions* → `catalog-service` → seleccionar todas las revisiones → *Actions* → *Deregister*.
+4. **Eliminar el Application Load Balancer y Target Group**:
+   - EC2 → *Load Balancers* → `alb-catalog-service` → *Actions* → *Delete*.
+   - EC2 → *Target Groups* → `tg-catalog-service` → *Actions* → *Delete*.
+5. **Eliminar la Instancia RDS MySQL**:
+   - RDS → *Databases* → `database-dev` → *Actions* → *Delete* (desmarcar la creación de snapshot final y copias de seguridad retenidas).
+6. **Eliminar Parámetro SSM y Grupo de Logs CloudWatch**:
+   - Systems Manager → *Parameter Store* → seleccionar `/catalog-service/db-password` → *Delete*.
+   - CloudWatch → *Log groups* → `/ecs/catalog-service` → *Actions* → *Delete log group*.
+7. **Eliminar Repositorio en Amazon ECR**:
+   - ECR → Repositorio `catalog-service` → *Delete* (marcar borrado forzado para eliminar las imágenes almacenadas).
+8. **Eliminar Roles de IAM y Claves de Acceso de CLI**:
+   - IAM → *Roles* → eliminar `github-actions-catalog-service` y las políticas personalizadas creadas.
+   - IAM → *Users* → tu usuario → *Security credentials* → eliminar la *Access key* utilizada localmente en la AWS CLI.
+
+---
+
+## 📚 13. Guías de Laboratorio Complementarias
+
+El repositorio incluye manuales paso a paso exhaustivos creados para guiar tanto la configuración inicial como la automatización:
+
+- 📖 [**Guía Manual en Consola: ECR + ECS Fargate + ALB**](file:///D:/icodeap/code/prod/catalog/guia-consola-ecr-ecs-alb2_6.md):  
+  Manual detallado para el aprovisionamiento manual de toda la infraestructura AWS (ECR, VPC Security Groups, SSM Parameter Store, RDS MySQL, Target Group, ALB, ECS Clúster, Roles de IAM y federación OIDC).
+- 🚀 [**Guía del Pipeline Completo de CI/CD**](file:///D:/icodeap/code/prod/catalog/guia-pipeline-completo-modulo5_2.md):  
+  Manual paso a paso para la construcción modular del workflow en GitHub Actions (Jobs `test`, `build-and-push` y `deploy`, configuración de Environments, Secrets, Smoke Tests y escenarios de prueba de fallos intencionales).
 
