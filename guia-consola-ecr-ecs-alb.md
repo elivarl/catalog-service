@@ -964,13 +964,25 @@ Rol → *Permissions* → *Add permissions* → *Create inline policy* → pesta
 
 Las acciones de task definition llevan `*` porque, hasta donde sé, no admiten recursos específicos. Si al ejecutar el pipeline aparece `AccessDenied`, el mensaje nombra la acción y el recurso que faltan: agrégalos aquí, de uno en uno y solo los que el mensaje nombre. No agregues por adelantado acciones que ningún error ha pedido (por ejemplo `ecr:DescribeRepositories` o `ecr:ListImages`): cada una amplía lo que el rol puede hacer sobre el repositorio.
 
-### 11.3 Secreto en GitHub
+### 11.3 Configurar secretos en GitHub
 
-Copia el **ARN del rol** (está en su página de IAM: `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-catalog-service`). En GitHub: repositorio → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*, con el nombre `AWS_ROLE_ARN`. No es una clave de acceso: es solo la dirección del rol, y por eso no hay claves de AWS en GitHub.
+> **Qué es y por qué importa**
+>
+> **Qué es:** tres piezas en GitHub que el workflow referencia: el secreto con el ARN del rol, el environment `production` y una variable con el DNS del ALB.
+>
+> 1. **El environment `production` no es decorativo:** el nombre aparece en la trust policy (`environment:production`). Si no coincide letra por letra, el job `deploy` no puede asumir el rol.
+> 2. **`ALB_DNS` va como variable, no como secreto:** no es sensible, y los secretos se enmascaran en los logs, lo que dificulta depurar.
+> 3. **Antes de escribir el workflow:** así el primer push ya encuentra todo.
+
+En GitHub → tu repositorio → *Settings*:
+
+1. **Secreto `AWS_ROLE_ARN`:** Copia el **ARN del rol** (está en su página de IAM: `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-catalog-service`). En GitHub: repositorio → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*, con el nombre `AWS_ROLE_ARN`. No es una clave de acceso: es solo la dirección del rol, y por eso no hay claves de AWS en GitHub.
+2. **Environment:** *Environments* → *New environment* → nombre exacto **`production`** → *Configure environment*. No agregues reglas por ahora. (Opcional: *Required reviewers* pone una aprobación manual antes de cada deploy; con eso el job se queda esperando hasta que alguien apruebe.)
+3. **Variable `ALB_DNS`:** *Secrets and variables* → *Actions* → pestaña *Variables* → *New repository variable*. Nombre `ALB_DNS`, valor el DNS name **sin** `http://` (`alb-catalog-service-xxxx.us-east-1.elb.amazonaws.com`).
 
 ### 11.4 Cómo se conecta con el workflow
 
-El workflow necesita dos cosas, que ya incluye el del módulo 5:
+El workflow necesita dos cosas, que ya incluye el del módulo 4:
 
 - El permiso `id-token: write`, para que GitHub emita el token.
 - La acción `aws-actions/configure-aws-credentials` con `role-to-assume: ${{ secrets.AWS_ROLE_ARN }}`.
