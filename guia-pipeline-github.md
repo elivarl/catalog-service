@@ -421,3 +421,65 @@ Un despliegue que arranca pero queda `unhealthy` y activa el rollback automátic
 - **Versiones de las acciones.** Las usadas en esta guía, comprobadas el 16 de octubre de 2026: `actions/checkout@v6`, `actions/setup-java@v5`, `docker/setup-buildx-action@v4`, `docker/build-push-action@v7`, `aws-actions/configure-aws-credentials@v6`, `aws-actions/amazon-ecr-login@v2`, `aws-actions/amazon-ecs-render-task-definition@v1` y `aws-actions/amazon-ecs-deploy-task-definition@v2`. Verifica las versiones vigentes antes de ejecutar el workflow.
 - **Si tus pruebas no usan base de datos,** quita el contenedor de servicio de MySQL del job `test` para simplificarlo.
 - **Costos:** el service sigue encendido entre ejecuciones. Recuerda el paso 12 (destruir todo) al terminar.
+
+# Guía de Referencia: ¿Para qué sirve cada `uses:` en nuestro Pipeline de CI/CD?
+
+En términos sencillos, cada **`uses:`** es como importar una **librería o un bloque de código prefabricado**. En lugar de tener que escribir cientos de líneas de comando manuales en la terminal para conectarte a AWS o configurar Docker, alguien más (GitHub, Docker o AWS) ya hizo ese trabajo pesado por vos, lo empaquetó y te lo comparte para que lo ejecutes con una sola línea.
+
+A continuación se detalla la función, el objetivo y las consideraciones de cambio para cada una de las acciones declaradas en el flujo:
+
+---
+
+### 1. `actions/checkout@v6`
+
+* **¿Para qué sirve?:** Descarga el código fuente de tu repositorio dentro del servidor temporal de GitHub.
+* **El objetivo:** Los servidores donde corre tu pipeline arrancan 100% vacíos. Este paso equivale a hacer un `git clone` automático de tu proyecto para que las herramientas del flujo puedan leer tu `Dockerfile`, tus carpetas de código y tus archivos de configuración.
+* **Consideraciones para cambiarlo:** Cambialo solo cuando GitHub lance una nueva versión mayor (como una `@v7` o `@v8`) que optimice la velocidad de descarga o solucione problemas de seguridad en sistemas operativos de servidores nuevos.
+
+---
+
+### 2. `actions/setup-java@v5`
+
+* **¿Para qué sirve?:** Instala y configura el entorno de desarrollo de Java (JDK).
+* **El objetivo:** Como el servidor está completamente limpio al iniciar, no reconoce comandos de Java. Esta herramienta descarga e instala la versión exacta que le pidas (en tu caso, Java 21 de Temurin) para que el comando `./mvnw` pueda compilar y probar tu aplicación con éxito.
+* **Consideraciones para cambiarlo:** Revisá su repositorio si decidís cambiar la versión de Java de tu proyecto (por ejemplo, si en el futuro migrás tu app a Java 25 o 27) para asegurarte de que esa versión de la Action soporte los nuevos JDKs.
+
+---
+
+### 3. `aws-actions/configure-aws-credentials@v6`
+
+* **¿Para qué sirve?:** Conecta de forma segura tu pipeline con tu cuenta de AWS mediante el protocolo OIDC (OpenID Connect).
+* **El objetivo:** Le otorga permisos temporales al servidor de GitHub para interactuar con tus servicios de AWS sin necesidad de guardar contraseñas fijas ni credenciales peligrosas en tu código de forma permanente. Genera llaves de acceso dinámicas que caducan en cuanto el pipeline termina.
+* **Consideraciones para cambiarlo:** **Mucha atención aquí.** Amazon actualiza esta herramienta frecuentemente por razones de seguridad cibernética. Si AWS anuncia que las versiones viejas sufren vulnerabilidades o cambian la forma en que se conectan con GitHub, es obligatorio subir a la versión más reciente para que no se bloqueen tus despliegues.
+
+---
+
+### 4. `aws-actions/amazon-ecr-login@v2`
+
+* **¿Para qué sirve?:** Autentica las herramientas de Docker dentro del registro privado de imágenes de AWS (Amazon ECR).
+* **El objetivo:** Permite que tu pipeline obtenga los permisos necesarios para poder subir (hacer `push`) la imagen de Docker empaquetada hacia el almacén de AWS.
+* **Consideraciones para cambiarlo:** Cambialo si cambia la API de Amazon ECR o si Docker actualiza sus protocolos de autenticación de seguridad globales.
+
+---
+
+### 5. `docker/setup-buildx-action@v4` y `docker/build-push-action@v7`
+
+* **¿Para qué sirven?:** Configuran el motor avanzado de Docker (Buildx) y empaquetan tu aplicación en una imagen para luego subirla a AWS ECR.
+* **El objetivo:** Ejecutan el proceso automatizado de leer tu `Dockerfile`, empaquetar tu código compilado de Java y subir el contenedor empaquetado a la nube de AWS.
+* **Consideraciones para cambiarlo:** Estas herramientas avanzan muy rápido. Cambialas si necesitás compilar imágenes para diferentes arquitecturas de procesador (como compilar en servidores Intel para que corran en chips ARM de AWS Graviton) o si querés optimizar el tamaño y la velocidad del empaquetado.
+
+---
+
+### 6. `aws-actions/amazon-ecs-render-task-definition@v1` y `amazon-ecs-deploy-task-definition@v2`
+
+* **¿Para qué sirven?:** Actualizan la configuración de tu contenedor en AWS (Task Definition) y le avisan a AWS ECS que apunte a la nueva versión que acabás de subir.
+* **El objetivo:** Realizan el despliegue final en producción. Toman el archivo `.aws/task-definition.json`, le inyectan la nueva etiqueta única de la imagen (`github.sha`) y le ordenan a AWS ECS que reinicie los servidores con el código nuevo de forma progresiva (despliegue *Rolling Update*) para que la app no deje de funcionar ni un solo segundo.
+* **Consideraciones para cambiarlo:** Monitorealas si cambiás la estructura de cómo manejás tus servicios en AWS ECS (por ejemplo, si pasás de usar ECS clásico a AWS Fargate).
+
+---
+
+## 💡 Resumen de consideraciones generales para cambiarlos
+
+1. **Mantén la versión mayor (`@vX`):** Deja que GitHub maneje los parches menores. Si usas `@v6`, recibirás mejoras automáticas de rendimiento sin que se rompa la compatibilidad de tus comandos.
+2. **Si no está roto, no lo toques... salvo por seguridad:** Para tu primer despliegue, las versiones actuales de tu archivo son perfectas. Solo planificá actualizarlas cada 6 meses o un año para evitar que queden obsoletas (*deprecated*).
+3. **La prueba del error:** Recordá que si ponés una versión incorrecta o inexistente, GitHub Actions detendrá el proceso de inmediato y te dirá exactamente qué línea falló en la pestaña de monitoreo.
