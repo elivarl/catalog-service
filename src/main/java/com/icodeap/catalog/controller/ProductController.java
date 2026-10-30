@@ -46,4 +46,9 @@ public class ProductController {
         productService.deleteProduct(id);
         return ResponseEntity.noContent().build();
     }
+
+    @GetMapping("/pipeline")
+    public String implementarPipeline(){
+        return "Pipeline implementado satisfactoriamente...";
+    }
 }
