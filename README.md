@@ -832,8 +832,9 @@ Para evitar consumos no deseados en la cuenta de AWS una vez completada la prác
 
 El repositorio incluye manuales paso a paso exhaustivos creados para guiar tanto la configuración inicial como la automatización:
 
-- 📖 [**Guía Manual en Consola: ECR + ECS Fargate + ALB**](Guia-consola-ecr-ecs-alb2.6.md):
+- 📖 [**Requisitos Previos**](requisitos-previos.md):
+  Requisitos previos la implementación
+- 📖 [**Guía Manual en Consola: ECR + ECS Fargate + ALB**](guia-consola-ecr-ecs-alb.md):
   Manual detallado para el aprovisionamiento manual de toda la infraestructura AWS (ECR, VPC Security Groups, SSM Parameter Store, RDS MySQL, Target Group, ALB, ECS Clúster, Roles de IAM y federación OIDC).
-- 🚀 [**Guía del Pipeline Completo de CI/CD**](Guia-pipeline-5.2.md):
+- 🚀 [**Guía del Pipeline Completo de CI/CD**](guia-pipeline-github.md):
   Manual paso a paso para la construcción modular del workflow en GitHub Actions (Jobs `test`, `build-and-push` y `deploy`, configuración de Environments, Secrets, Smoke Tests y escenarios de prueba de fallos intencionales).
-
