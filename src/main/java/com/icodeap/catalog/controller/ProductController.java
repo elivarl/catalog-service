@@ -49,6 +49,6 @@ public class ProductController {
 
     @GetMapping("/pipeline")
     public String implementarPipeline(){
-        return "Pipeline implementado satisfactoriamente...";
+        return "Pipeline implementado satisfactoriamente y enviado a la infraestructura de AMAZON AWS...";
     }
 }
