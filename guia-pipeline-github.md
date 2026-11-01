@@ -1,6 +1,6 @@
 # Guía paso a paso: Módulo 3. Pipeline completo (GitHub Actions → ECR → ECS)
 
-Módulo 3 del tutorial *Spring Boot de local a producción: CI/CD con GitHub Actions y AWS*. Continúa la guía de consola (ECR + ECS Fargate + ALB): los pasos 0 a 10 dejaron lista la infraestructura (módulo 2) y el paso 11 creó el rol OIDC, al inicio de este módulo.
+Módulo 3 del curso *Backend Profesional: CI/CD con Spring Boot, GitHub Actions y AWS*. Continúa la guía de consola (ECR + ECS Fargate + ALB): los pasos 0 a 10 dejaron lista la infraestructura (módulo 2) y el paso 11 creó el rol OIDC, al inicio de este módulo.
 
 **Tiempos:** estimados de ejecución en vivo.
 

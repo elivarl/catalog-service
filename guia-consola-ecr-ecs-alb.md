@@ -1,6 +1,6 @@
 # Guía manual en consola: ECR + ECS Fargate + ALB
 
-Módulo 2 del tutorial *Spring Boot de local a producción: CI/CD con GitHub Actions y AWS*.
+Módulo 2 del curso *Backend Profesional: CI/CD con Spring Boot, GitHub Actions y AWS*.
 
 **Alcance:** los pasos 0 a 10 son el módulo 2. El paso 11 (rol de AWS para GitHub con OIDC) abre el módulo 3, y el paso 12 es su última lección: revisar los gastos y eliminar la infraestructura. Los tiempos son estimados de ejecución en vivo.
 
