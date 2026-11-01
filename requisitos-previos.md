@@ -9,7 +9,8 @@ Para el desarrollo, pruebas locales y la correcta ejecución del pipeline de int
 
 ### 2. Control de Versiones y Repositorios
 * **[Git](https://git-scm.com/):** Sistema de control de versiones para el código fuente.
-* **[Cuenta en GitHub](https://github.com/):** Necesaria para alojar el repositorio y configurar los workflows de GitHub Actions.
+* **[Cuenta en GitHub](https://github.com/):** Necesaria para alojar el reposito rio y configurar los workflows de GitHub Actions.
+* **[GitHub CLI (`gh`)](https://cli.github.com/):** se usa en el módulo 3 para o btener los IDs de tu repositorio al configurar el acceso de GitHub a AWS. Puedes instalarlo cuando llegues a ese punto.
 
 ### 3. Contenedores e Infraestructura Local
 * **Docker Desktop:** Utilizado para la contenerización de servicios y pruebas de imágenes locales.
@@ -22,7 +23,7 @@ Para el desarrollo, pruebas locales y la correcta ejecución del pipeline de int
 
 ### 4. Pruebas y Seguridad
 * **[Postman](https://www.postman.com/downloads/):** Herramienta para probar y documentar los endpoints de la API REST.
-* **Microsoft Authenticator:** Aplicación móvil (disponible en Play Store / App Store) requerida para la verificación en dos pasos (2FA) en las cuentas de GitHub y accesos corporativos/cloud.
+* **App de autenticación (por ejemplo, Microsoft Authenticator o Google Authenticator):** aplicación móvil para activar la verificación en dos pasos (MFA) en tu cuenta de AWS (módulo 2) y en GitHub.
 
-### 5. Configuración de la Interfaz CLI (Referencia)
-* **Configuración de la Interfaz de Línea de Comandos:** No te preocupes si aún no la tienes configurada; esta sección y su ajuste detallado se realizarán paso a paso de manera directa durante el desarrollo del curso, por lo que puedes tomarlo como una referencia inicial.
+### 5. AWS CLI (se configura durante el curso)
+* **[AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html):** no te preocupes si aún no la tienes. Se instala y configura paso a paso en el módulo 2, junto con la cuenta de AWS.

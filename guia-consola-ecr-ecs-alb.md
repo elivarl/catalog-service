@@ -1,8 +1,8 @@
 # Guía manual en consola: ECR + ECS Fargate + ALB
 
-Módulo 3 del tutorial *Spring Boot de local a producción: CI/CD con GitHub Actions y AWS*.
+Módulo 2 del tutorial *Spring Boot de local a producción: CI/CD con GitHub Actions y AWS*.
 
-**Alcance:** los pasos 0 a 10 son el módulo 3; el paso 11 anticipa el módulo 4 (OIDC); el paso 12 es la lección de limpieza (módulo 8). Los tiempos son estimados de ejecución en vivo.
+**Alcance:** los pasos 0 a 10 son el módulo 2. El paso 11 (rol de AWS para GitHub con OIDC) abre el módulo 3, y el paso 12 es su última lección: revisar los gastos y eliminar la infraestructura. Los tiempos son estimados de ejecución en vivo.
 
 **Idioma de la consola:** esta guía usa los nombres de los campos en inglés. Si tu consola está en español, los nombres cambian (por ejemplo *Target type* se ve como *Tipo de destino*). Puedes cambiar el idioma en los ajustes de la consola (engranaje, arriba a la derecha; verifica la ruta exacta) para que coincida con la guía.
 
@@ -24,7 +24,7 @@ Coinciden con las variables del workflow de GitHub Actions.
 | ALB | `alb-catalog-service` |
 | Log group | `/ecs/catalog-service` |
 | Parámetro de secreto | `/catalog-service/db-password` |
-| Base de datos (dentro de la instancia RDS) | `products` |
+| Base de datos (dentro de la instancia RDS) | `catalog_db` |
 | Instancia RDS | `database-dev` |
 | Motor de base de datos | MySQL |
 | Rol de ejecución | `ecsTaskExecutionRole` |
@@ -44,7 +44,7 @@ Puedes nombrar los recursos como prefieras (por ejemplo `api-catalogo` en lugar 
 | Inline policy del rol de ejecución | `parameter/<tu-ruta>/*` debe cubrir ese parámetro |
 | Task definition, `executionRoleArn` | El nombre de tu rol de ejecución |
 | `SPRING_DATASOURCE_URL` | El endpoint de RDS y el nombre de la base |
-| Workflow (módulo 5) | `ECR_REPOSITORY`, `ECS_CLUSTER`, `ECS_SERVICE`, `CONTAINER_NAME` |
+| Workflow (módulo 3) | `ECR_REPOSITORY`, `ECS_CLUSTER`, `ECS_SERVICE`, `CONTAINER_NAME` |
 
 El desajuste más común está en la política de SSM: si tu parámetro se llama `/api-catalogo/db-password` y la política sigue apuntando a `parameter/catalog-service/*`, la tarea falla al arrancar con `ResourceInitializationError ... unable to pull secrets`, y parece un error del paso 9.
 
@@ -52,7 +52,7 @@ El desajuste más común está en la política de SSM: si tu parámetro se llama
 
 ## Requisitos previos de la app
 
-La guía asume que la app de los módulos 1 y 2 cumple esto. Si no, los pasos 9 y 10 fallan aunque la infraestructura esté perfecta.
+La guía asume que la app del módulo 1 cumple esto. Si no, los pasos 9 y 10 fallan aunque la infraestructura esté perfecta.
 
 1. **Docker instalado** y funcionando en tu máquina (`docker version`).
 2. **Dockerfile** que construye la imagen y expone el puerto `8080`; la app escucha en ese puerto.
@@ -60,7 +60,7 @@ La guía asume que la app de los módulos 1 y 2 cumple esto. Si no, los pasos 9 
 4. **Esquema de base de datos (MySQL):** RDS crea una base vacía, sin tablas. Como RDS no es accesible desde tu máquina, la app debe crear sus tablas sola al arrancar. En este MVP se hace con `spring.jpa.hibernate.ddl-auto: update`; en producción real se usan migraciones (opción de Flyway al final de la sección siguiente). Sin esto, `/actuator/health` responde `UP` pero `/products` falla con `Table 'products.<tu_tabla>' doesn't exist`. Se configura en la sección *Base de datos y app en local con Docker*, justo debajo.
 5. **Sin credenciales hardcodeadas:** la app recibe la URL, el usuario y la contraseña de la base por variables de entorno (`SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`). En `application.yml` se referencian con `${...}` (ver la sección siguiente), así que la misma imagen sirve en tu máquina y en AWS cambiando únicamente esos valores.
 6. **VPC por defecto existente:** VPC → *Your VPCs*, columna *Default VPC = Yes*. Si no existe, la guía no aplica tal cual.
-7. **Repositorio en GitHub (no hace falta para los pasos 0 a 10):** se necesita desde el módulo 4, porque la trust policy de OIDC nombra tu repositorio (`USUARIO/REPO`) y el workflow vive en `.github/workflows/`. Puedes crearlo ahora, aunque esté vacío.
+7. **Repositorio en GitHub (no hace falta para los pasos 0 a 10):** se necesita desde el módulo 3 (paso 11), porque la trust policy de OIDC nombra tu repositorio (`USUARIO/REPO`) y el workflow vive en `.github/workflows/`. Puedes crearlo ahora, aunque esté vacío.
 
 ---
 
@@ -175,7 +175,7 @@ docker network create catalog-service-net
 
 docker run -d --name catalog-service-db --network catalog-service-net \
   -e MYSQL_ROOT_PASSWORD=local-root-pass \
-  -e MYSQL_DATABASE=products \
+  -e MYSQL_DATABASE=catalog_db \
   -e MYSQL_USER=app -e MYSQL_PASSWORD=local-app-pass \
   -p 3306:3306 mysql:8.4
 ```
@@ -186,7 +186,7 @@ Espera unos 20 a 30 segundos hasta que `docker logs catalog-service-db` muestre 
 docker build -t catalog-service:test .
 
 docker run --rm --name catalog-service-app --network catalog-service-net -p 8080:8080 \
-  -e SPRING_DATASOURCE_URL="jdbc:mysql://catalog-service-db:3306/products?allowPublicKeyRetrieval=true&useSSL=false" \
+  -e SPRING_DATASOURCE_URL="jdbc:mysql://catalog-service-db:3306/catalog_db?allowPublicKeyRetrieval=true&useSSL=false" \
   -e SPRING_DATASOURCE_USERNAME=app \
   -e SPRING_DATASOURCE_PASSWORD=local-app-pass \
   catalog-service:test
@@ -201,7 +201,7 @@ services:
     container_name: catalog-service-db
     environment:
       MYSQL_ROOT_PASSWORD: local-root-pass
-      MYSQL_DATABASE: products
+      MYSQL_DATABASE: catalog_db
       MYSQL_USER: app
       MYSQL_PASSWORD: local-app-pass
     ports:
@@ -221,7 +221,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/products?allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/catalog_db?allowPublicKeyRetrieval=true&useSSL=false
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: local-app-pass
     ports:
@@ -235,7 +235,7 @@ Se levanta con `docker compose up --build`.
 
 Qué conviene explicar:
 
-- `MYSQL_DATABASE: products` crea la base vacía al primer arranque, igual que el campo *Initial database name* de RDS. Las tablas las crea Hibernate.
+- `MYSQL_DATABASE: catalog_db` crea la base vacía al primer arranque, igual que el campo *Initial database name* de RDS. Las tablas las crea Hibernate.
 - En la URL, el host es el **nombre del contenedor de la base** (`catalog-service-db` o `db`), no `localhost`: dentro de Docker, `localhost` es el propio contenedor de la app.
 - `allowPublicKeyRetrieval=true&useSSL=false` es **solo para este MySQL local**. En RDS no se pone.
 - Usa la misma versión mayor de MySQL que elijas en RDS (verifica cuáles ofrece RDS al crear la instancia).
@@ -245,17 +245,17 @@ Qué conviene explicar:
 
 ```bash
 curl -i http://localhost:8080/actuator/health        # 200 y {"status":"UP"}
-curl -i http://localhost:8080/products               # lista vacía hasta que crees un producto
-docker exec catalog-service-db mysql -uapp -plocal-app-pass products -e "SHOW TABLES;"
+curl -i http://localhost:8080/api/v1/products        # lista vacía hasta que crees un producto
+docker exec catalog-service-db mysql -uapp -plocal-app-pass catalog_db -e "SHOW TABLES;"
 ```
 
-Debe aparecer la tabla de tu entidad (por ejemplo `product`). Para detener: en la opción A, `docker stop catalog-service-db catalog-service-app` y `docker rm catalog-service-db`; en la opción B, `docker compose down` (conserva los datos) o `docker compose down -v` (los borra).
+Debe aparecer la tabla de tu entidad (en este proyecto, `products`). Para detener: en la opción A, `docker stop catalog-service-db catalog-service-app` y `docker rm catalog-service-db`; en la opción B, `docker compose down` (conserva los datos) o `docker compose down -v` (los borra).
 
 ### 6) Qué cambia entre local y AWS
 
 | Variable | Local (Docker) | AWS (ECS) |
 |---|---|---|
-| `SPRING_DATASOURCE_URL` | `jdbc:mysql://catalog-service-db:3306/products?allowPublicKeyRetrieval=true&useSSL=false` | `jdbc:mysql://<RDS_ENDPOINT>:3306/products` |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://catalog-service-db:3306/catalog_db?allowPublicKeyRetrieval=true&useSSL=false` | `jdbc:mysql://<RDS_ENDPOINT>:3306/catalog_db` |
 | `SPRING_DATASOURCE_USERNAME` | `app` | `admin` (usuario maestro de RDS) |
 | `SPRING_DATASOURCE_PASSWORD` | `local-app-pass` | Viene de Parameter Store (`secrets` en la task definition) |
 
@@ -299,7 +299,7 @@ No hace falta para este tutorial. Si más adelante quieres historial de cambios 
 2. **Presupuesto:** *Billing and Cost Management* → *Budgets* → *Create budget* → *Use a template* → *Monthly cost budget*. Monto: `10` USD. Agrega tu email.
 3. **Acceso de IAM a Billing (como root, una sola vez):** por defecto, un usuario IAM no puede ver Billing aunque tenga `AdministratorAccess`. En la cuenta root: menú de tu cuenta → *Account* → *IAM user and role access to Billing information* → *Edit* → *Activate IAM Access*. Sin esto no podrás revisar costos con tu usuario (paso 12). Verifica el nombre exacto de la opción en tu consola.
 4. **Usuario para trabajar (acceso a la consola):** IAM → *Users* → *Create user* → marca *Provide user access to the AWS Management Console*, define una contraseña y, en *Set permissions*, elige *Attach policies directly* y marca la política administrada por AWS `AdministratorAccess` (**solo para el tutorial**; en un entorno real se restringe). Activa MFA también en este usuario. Para entrar usa la URL de inicio de sesión de IAM: `https://<ACCOUNT_ID>.signin.aws.amazon.com/console`. Con este usuario haces todos los clics de los pasos siguientes; no vuelvas a usar root.
-5. **CLI (obligatoria, al menos para el paso 1):** instala AWS CLI v2. La CLI no usa tu contraseña de consola, necesita una *access key*: IAM → *Users* → tu usuario → *Security credentials* → *Create access key* → caso de uso *Command Line Interface (CLI)*. Luego ejecuta `aws configure` (Access Key ID, Secret, región `us-east-1`, formato `json`). Esta clave vive solo en tu máquina: no la subas a un repo ni a GitHub. El pipeline usará OIDC, sin claves (módulo 4). **Bórrala al terminar** (paso 12). Verifica:
+5. **CLI (obligatoria, al menos para el paso 1):** instala AWS CLI v2. La CLI no usa tu contraseña de consola, necesita una *access key*: IAM → *Users* → tu usuario → *Security credentials* → *Create access key* → caso de uso *Command Line Interface (CLI)*. Luego ejecuta `aws configure` (Access Key ID, Secret, región `us-east-1`, formato `json`). Esta clave vive solo en tu máquina: no la subas a un repo ni a GitHub. El pipeline usará OIDC, sin claves (módulo 3). **Bórrala al terminar** (paso 12). Verifica:
    ```bash
    aws sts get-caller-identity
    ```
@@ -315,7 +315,7 @@ No hace falta para este tutorial. Si más adelante quieres historial de cambios 
 > **Qué es:** ECR (Elastic Container Registry) es el almacén privado de imágenes Docker de AWS. Equivale a Docker Hub, pero dentro de tu cuenta.
 >
 > 1. **Sin registro no hay despliegue:** ECS no descarga imágenes de tu laptop, solo de un registro.
-> 2. **Es el destino del pipeline:** el job `build-and-push` del módulo 5 sube aquí cada imagen.
+> 2. **Es el destino del pipeline:** el job `build-and-push` del módulo 3 sube aquí cada imagen.
 > 3. **Tag immutability:** impide sobrescribir una etiqueta ya publicada, así que `:abc123` siempre es exactamente la misma imagen. Da trazabilidad y rollback confiables; por eso se etiqueta con el SHA del commit y no con `latest`.
 > 4. **Primera imagen a mano:** ECS la necesita para arrancar el service por primera vez, y te muestra el trabajo manual que el pipeline va a eliminar.
 > 5. **Costo:** ECR cobra por almacenamiento (verifica la tarifa vigente), así que se borra el repositorio al final.
@@ -390,7 +390,7 @@ EC2 → *Security Groups* → *Create security group*. Créalos **en este orden*
 > **Qué es:** un grupo de logs en CloudWatch, donde AWS guarda lo que tu aplicación imprime por consola. Spring Boot escribe en la salida estándar del contenedor y el driver `awslogs` de la task definition lo envía aquí.
 >
 > 1. **En Fargate no hay servidor al que entrar:** no hay SSH ni archivos que mirar. Los logs son casi la única forma de saber por qué falló una tarea.
-> 2. **Casi toda la tabla de errores de esta guía se diagnostica con logs:** `exec format error`, `Unknown database 'products'`, `Communications link failure` a la BD.
+> 2. **Casi toda la tabla de errores de esta guía se diagnostica con logs:** `exec format error`, `Unknown database 'catalog_db'`, `Communications link failure` a la BD.
 > 3. **Debe existir antes:** si el grupo no existe cuando ECS arranca la tarea, esta falla al iniciar. Hasta donde sé, `AmazonECSTaskExecutionRolePolicy` permite escribir logs pero no crear el grupo; verifícalo la primera vez que ejecutes la guía.
 > 4. **La retención controla el costo:** por defecto un grupo de logs nunca expira y se cobra por volumen ingerido y almacenamiento (revisa las tarifas vigentes). Con 1 semana no se acumulan para siempre.
 > 5. **Qué ver:** el nombre debe ser idéntico al `awslogs-group` de la task definition (`/ecs/catalog-service`, con la barra inicial) y estar en `us-east-1`. No se deben loguear contraseñas ni datos sensibles.
@@ -451,7 +451,7 @@ El usuario y la URL de la BD no son secretos: irán como variables de entorno no
 >
 > 1. **Los datos viven fuera del contenedor:** las tareas de Fargate son efímeras; lo que se guarde dentro se pierde en cada despliegue.
 > 2. **Public access: No + `db-catalog-service-sg`:** la base solo es alcanzable desde tu app, no desde internet. Es la última capa de la seguridad por capas del paso 2.
-> 3. **Initial database name:** sin él, RDS crea el servidor pero no la base `products`, y la app falla al conectar.
+> 3. **Initial database name:** sin él, RDS crea el servidor pero no la base `catalog_db`, y la app falla al conectar.
 > 4. **Single-AZ, `db.t4g.micro`, sin autoescalado ni Performance Insights:** decisiones de costo para el tutorial. En producción real se usaría Multi-AZ. RDS cobra mientras esté encendida.
 > 5. **Deletion protection desmarcado:** si no, no podrás borrarla en el paso 12.
 
@@ -472,18 +472,18 @@ RDS → *Create database*.
 | | VPC | Default |
 | | **Public access** | **No** |
 | | VPC security group | *Choose existing* → quita `default` y agrega `db-catalog-service-sg` |
-| Additional configuration (sección **plegada**: ábrela) | **Initial database name** | `products` |
+| Additional configuration (sección **plegada**: ábrela) | **Initial database name** | `catalog_db` |
 | | Backup retention | `1` día (o desactiva en el tutorial) |
 | | Deletion protection | **Desmarcado** (si no, no podrás borrarla en la lección de limpieza) |
 
 Desactiva *Performance Insights* y *Enhanced monitoring* para no sumar costo.
 
-El campo **Initial database name** es el que más se pasa por alto: está dentro de una sección plegada y *Easy create* no lo muestra. Si lo dejas vacío, RDS no crea la base `products` y la app falla con `Unknown database 'products'`.
+El campo **Initial database name** es el que más se pasa por alto: está dentro de una sección plegada y *Easy create* no lo muestra. Si lo dejas vacío, RDS no crea la base `catalog_db` y la app falla con `Unknown database 'catalog_db'`.
 
 Cuando el estado sea **Available**, entra a la instancia → *Connectivity & security* y copia el **Endpoint**. Tu URL JDBC será:
 
 ```
-jdbc:mysql://<RDS_ENDPOINT>:3306/products
+jdbc:mysql://<RDS_ENDPOINT>:3306/catalog_db
 ```
 
 ---
@@ -620,16 +620,16 @@ Como el parámetro usa la clave por defecto `alias/aws/ssm`, no necesitas permis
 | Campo | Valor | Viene de |
 |---|---|---|
 | `image` | `<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/catalog-service:v1` | Paso 1 (repositorio y primera imagen) |
-| `SPRING_DATASOURCE_URL` | `jdbc:mysql://<RDS_ENDPOINT>:3306/products` | Paso 5 (endpoint y *Initial database name*) |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://<RDS_ENDPOINT>:3306/catalog_db` | Paso 5 (endpoint y *Initial database name*) |
 | `SPRING_DATASOURCE_USERNAME` | `admin` | Paso 5 (*Master username*) |
 | `valueFrom` | `arn:aws:ssm:us-east-1:<ACCOUNT_ID>:parameter/catalog-service/db-password` | Paso 4 (parámetro de SSM) |
 | `awslogs-group` | `/ecs/catalog-service` | Paso 3 (log group) |
 | `executionRoleArn` | `arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole` | Paso 8.1 |
-| `name` del contenedor | `app` | Debe coincidir con `CONTAINER_NAME` del workflow (módulo 5) |
+| `name` del contenedor | `app` | Debe coincidir con `CONTAINER_NAME` del workflow (módulo 3) |
 
-Escríbela tú en vez de exportarla: así evitas los campos de solo lectura que AWS agrega al exportar (`taskDefinitionArn`, `revision`, `status`, etc.) y que complican el paso de render del pipeline. 
+Escríbela tú en vez de exportarla: así evitas los campos de solo lectura que AWS agrega al exportar (`taskDefinitionArn`, `revision`, `status`, etc.) y que complican el paso de render del pipeline.
 
-**a) Crea el archivo.** En la raíz de tu proyecto (junto al `pom.xml`) crea la carpeta **`.aws`** (el punto inicial es parte del nombre: con `aws` a secas, el pipeline del módulo 5 no encuentra el archivo y falla con `Task definition file does not exist`) y, dentro, el archivo `task-definition.json` con este contenido. Es solo un archivo de texto: apunta a la imagen que ya subiste a ECR en el paso 1, no la contiene. Va en tu repositorio Git (el de GitHub, no el de ECR) porque el pipeline (módulo 5) lo usa en cada despliegue:
+**a) Crea el archivo.** En la raíz de tu proyecto (junto al `pom.xml`) crea la carpeta **`.aws`** (el punto inicial es parte del nombre: con `aws` a secas, el pipeline del módulo 3 no encuentra el archivo y falla con `Task definition file does not exist`) y, dentro, el archivo `task-definition.json` con este contenido. Es solo un archivo de texto: apunta a la imagen que ya subiste a ECR en el paso 1, no la contiene. Va en tu repositorio Git (el de GitHub, no el de ECR) porque el pipeline (módulo 3) lo usa en cada despliegue:
 
 ```json
 {
@@ -652,7 +652,7 @@ Escríbela tú en vez de exportarla: así evitas los campos de solo lectura que 
         { "containerPort": 8080, "protocol": "tcp" }
       ],
       "environment": [
-        { "name": "SPRING_DATASOURCE_URL", "value": "jdbc:mysql://<RDS_ENDPOINT>:3306/products" },
+        { "name": "SPRING_DATASOURCE_URL", "value": "jdbc:mysql://<RDS_ENDPOINT>:3306/catalog_db" },
         { "name": "SPRING_DATASOURCE_USERNAME", "value": "admin" }
       ],
       "secrets": [
@@ -700,7 +700,7 @@ El primer comando no debe imprimir nada.
 **c) Comprueba antes de registrarla:**
 
 1. **La imagen `v1` existe** en tu repositorio `catalog-service` (ECR → `catalog-service` → *Images*). Si en el paso 1 subiste otra etiqueta, cámbiala aquí.
-2. **El contenedor se llama `app`**, y ese nombre será el `CONTAINER_NAME` del workflow (módulo 5).
+2. **El contenedor se llama `app`**, y ese nombre será el `CONTAINER_NAME` del workflow (módulo 3).
 3. **El valor del parámetro `/catalog-service/db-password` es exactamente la contraseña de la instancia RDS.** Si difieren, la tarea arranca pero falla al conectar con la base de datos.
 
 **d) Regístrala en ECS (consola).**
@@ -729,7 +729,7 @@ aws ecs register-task-definition --cli-input-json file://.aws/task-definition.js
 >
 > 1. **Convierte la receta en una app accesible:** la task definition por sí sola no ejecuta nada.
 > 2. **Rolling update 100%/200%:** arranca la tarea nueva antes de parar la vieja, para no tener caída durante el despliegue.
-> 3. **Circuit breaker con rollback:** si el despliegue nuevo no queda sano, ECS vuelve solo a la versión anterior. Es el tema del módulo 6.
+> 3. **Circuit breaker con rollback:** si el despliegue nuevo no queda sano, ECS vuelve solo a la versión anterior.
 > 4. **Health check grace period (90 s):** da tiempo a Spring Boot para arrancar antes de que el ALB lo juzgue.
 > 5. **Public IP activada + `app-catalog-service-sg`:** sin NAT, la tarea necesita IP pública para llegar a ECR; `app-catalog-service-sg` evita que alguien entre por ella.
 
@@ -789,7 +789,7 @@ Crea el service. Tarda unos minutos.
 ```bash
 curl http://<ALB_DNS>/actuator/health
 # {"status":"UP"}
-curl http://<ALB_DNS>/products
+curl http://<ALB_DNS>/api/v1/products
 ```
 
 **4) Si algo falla, estos comandos te dicen por qué:**
@@ -817,7 +817,7 @@ aws ecs list-tasks --cluster catalog-service-cluster --desired-status STOPPED
 | `exec format error` en logs | CloudWatch | Imagen `arm64` en una task `X86_64`. Reconstruye con `--platform linux/amd64` |
 | Código de salida 137 | *Stopped reason* | Sin memoria. Sube `memory` a 1024 o más |
 | `Communications link failure` o timeout a la BD | Logs de la app | `db-catalog-service-sg` no permite 3306 desde `app-catalog-service-sg`, o la URL JDBC / el endpoint es incorrecto |
-| `Unknown database 'products'` | Logs de la app | No pusiste *Initial database name* en RDS |
+| `Unknown database 'catalog_db'` | Logs de la app | No pusiste *Initial database name* en RDS |
 | `Access denied for user` | Logs de la app | El parámetro de SSM no coincide con la contraseña de RDS, o el usuario no es `admin` |
 | `Could not resolve placeholder 'SPRING_DATASOURCE_...'` | Logs de la app | La variable no llegó al contenedor: revisa `environment` y `secrets` de la task definition y que los nombres coincidan con el yml |
 | `Table 'products.<tu_tabla>' doesn't exist` | Logs de la app | La app no crea las tablas al arrancar: revisa `ddl-auto: update` (o Flyway, si lo usas); ver la sección de Docker local |
@@ -828,11 +828,11 @@ aws ecs list-tasks --cluster catalog-service-cluster --desired-status STOPPED
 
 ---
 
-## Paso 11. Conexión con el módulo 4 (OIDC)
+## Paso 11. Rol de AWS para GitHub Actions (OIDC), inicio del módulo 3
 
 > **Qué es y por qué importa**
 >
-> **Qué es:** el puente con el módulo 4. Define qué puede hacer en tu cuenta el rol que asumirá GitHub Actions.
+> **Qué es:** la primera lección del módulo 3. Define qué puede hacer en tu cuenta el rol que asumirá GitHub Actions.
 >
 > 1. **Mínimo privilegio donde sí importa:** el pipeline corre sin supervisión, así que solo debe poder subir imágenes al repositorio y actualizar el service.
 > 2. **OIDC:** GitHub obtiene credenciales temporales para ese rol, sin claves de AWS guardadas en GitHub Secrets. Es el diferencial frente a los tutoriales que usan claves estáticas.
@@ -861,7 +861,7 @@ Pulsa *Add provider* (si la consola ofrece *Get thumbprint*, úsalo). Debe apare
 3. No adjuntes políticas todavía.
 4. Nombre del rol: `github-actions-catalog-service`.
 
-**b) Editar la trust policy.** La que genera la consola solo acepta la rama indicada. Pero si el job de deploy usa `environment: production` (como en el workflow del módulo 5), el token de GitHub trae un `sub` con formato de environment, no de rama; el job de build, sin environment, usa el formato de rama. La condición debe aceptar ambos.
+**b) Editar la trust policy.** La que genera la consola solo acepta la rama indicada. Pero si el job de deploy usa `environment: production` (como en el workflow del módulo 3), el token de GitHub trae un `sub` con formato de environment, no de rama; el job de build, sin environment, usa el formato de rama. La condición debe aceptar ambos.
 
 **Formato del `sub` según la fecha de creación del repositorio.** GitHub cambió el formato por defecto. Los repositorios creados **después del 15 de julio de 2026** (y los que se renombren o transfieran después de esa fecha) usan un `sub` inmutable que incluye los IDs numéricos del dueño y del repositorio. Los anteriores conservan el formato clásico:
 
@@ -982,7 +982,7 @@ En GitHub → tu repositorio → *Settings*:
 
 ### 11.4 Cómo se conecta con el workflow
 
-El workflow necesita dos cosas, que ya incluye el del módulo 4:
+El workflow necesita dos cosas, que ya incluye el de la guía del pipeline (módulo 3):
 
 - El permiso `id-token: write`, para que GitHub emita el token.
 - La acción `aws-actions/configure-aws-credentials` con `role-to-assume: ${{ secrets.AWS_ROLE_ARN }}`.

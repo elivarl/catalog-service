@@ -1,20 +1,20 @@
-# Guía paso a paso: Módulo 4. Pipeline completo (GitHub Actions → ECR → ECS)
+# Guía paso a paso: Módulo 3. Pipeline completo (GitHub Actions → ECR → ECS)
 
-Módulo 4 del tutorial *Spring Boot de local a producción: CI/CD con GitHub Actions y AWS*. Continúa la guía de consola (ECR + ECS Fargate + ALB), que ya tiene la infraestructura y el rol OIDC (pasos 0 a 11).
+Módulo 3 del tutorial *Spring Boot de local a producción: CI/CD con GitHub Actions y AWS*. Continúa la guía de consola (ECR + ECS Fargate + ALB): los pasos 0 a 10 dejaron lista la infraestructura (módulo 2) y el paso 11 creó el rol OIDC, al inicio de este módulo.
 
 **Tiempos:** estimados de ejecución en vivo.
 
 | Bloque | Min |
 |---|---|
-| 4.0 Verificación previa  | 4 |
-| 4.2 Workflow base + job `test` | 6 |
-| 4.3 Job `build-and-push` | 8 |
-| 4.4 Job `deploy` | 8 |
-| 4.5 Primer despliegue y verificación | 5 |
-| 4.6 Segundo despliegue (cambio visible) | 4 |
+| 3.0 Verificación previa  | 4 |
+| 3.1 Workflow base + job `test` | 6 |
+| 3.2 Job `build-and-push` | 8 |
+| 3.3 Job `deploy` | 8 |
+| 3.4 Primer despliegue y verificación | 5 |
+| 3.5 Segundo despliegue (cambio visible) | 4 |
 | **Total** | **35** |
 
-4.7 (romper a propósito) es contenido extra y no cuenta en los 35 minutos.
+3.6 (romper a propósito) es contenido extra y no cuenta en los 35 minutos.
 
 ---
 
@@ -45,7 +45,7 @@ En un Pull Request corre **solo `test`**. Build y deploy corren únicamente en p
 | `TASK_DEFINITION` | `.aws/task-definition.json` | Paso 8.2 |
 | Secreto `AWS_ROLE_ARN` | ARN de `github-actions-catalog-service` | Paso 11.3 |
 | Environment | `production` | Paso 11.2b (trust policy) |
-| Variable `ALB_DNS` | DNS name de `alb-catalog-service` | Paso 6.2 (se crea en 4.1) |
+| Variable `ALB_DNS` | DNS name de `alb-catalog-service` | Paso 6.2 (la variable se crea en el paso 11.3) |
 
 Si nombraste distinto algún recurso, cambia el valor aquí y en el workflow. La tabla de la guía de consola (*Nota: si usas nombres distintos*) sigue vigente.
 
@@ -56,12 +56,12 @@ Si nombraste distinto algún recurso, cambia el valor aquí y en el workflow. La
 | Etiqueta de la imagen | `${{ github.sha }}` | Con *Tag immutability* activo, cada commit tiene su imagen única y el rollback apunta a un commit exacto. Resuelve la decisión que quedó abierta al final del paso 11 |
 | Build y deploy en jobs separados | Dos jobs, dos permisos OIDC | Coincide con los dos formatos de `sub` de la trust policy del paso 11.2b: `build-and-push` (sin environment) entra por `ref:refs/heads/main`; `deploy` (con `environment: production`) entra por `environment:production` |
 | Tests con MySQL real | Contenedor de servicio `mysql:8.4` en el job `test` | La app exige `SPRING_DATASOURCE_*` al arrancar. Usa las mismas variables que en Docker local |
-| Sin caché de capas ni de Maven | Se agrega en el módulo 6 | El primer build en CI baja todas las dependencias; es lento a propósito, para que la mejora del módulo 6 se note |
+| Sin caché de capas ni de Maven | Fuera del alcance de este curso | Cada build en CI descarga todas las dependencias. Es más lento, pero el workflow queda más simple de entender |
 | Smoke test al final | `curl` al ALB tras el deploy | Confirma desde fuera que la versión nueva responde, no solo que ECS dice "estable" |
 
 ---
 
-## Paso 4.0. Verificación previa (2 min)
+## Paso 3.0. Verificación previa (4 min)
 
 > **Qué es y por qué importa**
 >
@@ -108,7 +108,7 @@ Los tres deben aparecer, con esos nombres exactos. Linux distingue mayúsculas y
 
 ---
 
-## Paso 4.1. Workflow base y job `test` (6 min)
+## Paso 3.1. Workflow base y job `test` (6 min)
 
 > **Qué es y por qué importa**
 >
@@ -190,11 +190,11 @@ git commit -m "Pipeline: job test"
 git push -u origin feature/pipeline
 ```
 
-Abre un Pull Request hacia `main`. En la pestaña *Actions* debe correr `CI/CD` con **solo** el job `test`, en verde. No hace falta fusionar todavía: sigue en la misma rama con los pasos 5.3 y 5.4.
+Abre un Pull Request hacia `main`. En la pestaña *Actions* debe correr `CI/CD` con **solo** el job `test`, en verde. No hace falta fusionar todavía: sigue en la misma rama con los pasos 3.2 y 3.3.
 
 ---
 
-## Paso 4.2. Job `build-and-push` (8 min)
+## Paso 3.2. Job `build-and-push` (8 min)
 
 > **Qué es y por qué importa**
 >
@@ -202,7 +202,7 @@ Abre un Pull Request hacia `main`. En la pestaña *Actions* debe correr `CI/CD` 
 >
 > 1. **`needs: test`:** si las pruebas fallan, no se construye ni se sube nada.
 > 2. **`if: github.event_name == 'push'`:** en un PR no se toca AWS. Además, un PR tendría otro `sub` y la trust policy lo rechazaría.
-> 3. **Sin `environment`:** así el token trae `sub: repo:USUARIO/REPO:ref:refs/heads/main`, el primero de los dos formatos de la trust policy.
+> 3. **Sin `environment`:** así el token trae el `sub` de la rama `main` (termina en `:ref:refs/heads/main`), el primero de los dos que acepta la trust policy.
 > 4. **`permissions: id-token: write`:** sin esto GitHub no emite el token y falla la autenticación. Al declarar `permissions` en el job, reemplaza el bloque de arriba del archivo, por eso se repite `contents: read`.
 > 5. **Salida `image`:** el job publica la URI completa de la imagen para que `deploy` use exactamente esa, sin recalcularla.
 > 6. **`platforms: linux/amd64`:** la task definition es `X86_64`. El runner ya es x86_64; declararlo evita el `exec format error` si alguien cambia de runner.
@@ -251,7 +251,7 @@ Agrega este job debajo de `test`, dentro de `jobs:` (misma indentación que `tes
 
 **Ejecuta y verifica.** Para probar este job ahora sin esperar al deploy, fusiona el PR a `main` (el push a `main` dispara `test` y `build-and-push`; `deploy` aún no existe):
 
-1. *Actions*: `test` y `build-and-push` en verde. Anota cuánto tardó el build: es la cifra que mejorarás en el módulo 6.
+1. *Actions*: `test` y `build-and-push` en verde. Anota cuánto tardó el build: sin caché, cada build descarga todas las dependencias.
 2. ECR → `catalog-service` → *Images*: aparece una imagen con una etiqueta de 40 caracteres.
 3. Esa etiqueta debe ser el SHA del commit:
    ```bash
@@ -263,7 +263,7 @@ Luego crea la rama para el siguiente paso: `git checkout main && git pull && git
 
 ---
 
-## Paso 4.3. Job `deploy` (8 min)
+## Paso 3.3. Job `deploy` (8 min)
 
 > **Qué es y por qué importa**
 >
@@ -328,11 +328,11 @@ Agrega este job debajo de `build-and-push`:
           exit 1
 ```
 
-El archivo final es, en orden: el encabezado del paso 5.2 (`name`, `on`, `permissions`, `env`), y bajo `jobs:` los tres jobs `test`, `build-and-push` y `deploy`.
+El archivo final es, en orden: el encabezado del paso 3.1 (`name`, `on`, `permissions`, `env`), y bajo `jobs:` los tres jobs `test`, `build-and-push` y `deploy`.
 
 ---
 
-## Paso 4.4. Primer despliegue y verificación (5 min)
+## Paso 3.4. Primer despliegue y verificación (5 min)
 
 Sube la rama, abre el PR y fusiona a `main`:
 
@@ -366,19 +366,19 @@ El PR corre solo `test`. Al fusionar, el push a `main` corre los tres jobs. El d
 
 ---
 
-## Paso 4.5. Segundo despliegue: un cambio visible (4 min)
+## Paso 3.5. Segundo despliegue: un cambio visible (4 min)
 
 Es la escena central del módulo: `git push` y la nueva versión aparece sin tocar la consola.
 
-1. Haz un cambio observable en la API (por ejemplo, un campo nuevo en la respuesta de `/products` o un mensaje distinto) y comprueba que las pruebas siguen pasando.
+1. Haz un cambio observable en la API (por ejemplo, un campo nuevo en la respuesta de `/api/v1/products` o un mensaje distinto) y comprueba que las pruebas siguen pasando.
 2. Commit y push directo a `main` (o por PR, si quieres mostrar el flujo completo).
 3. Mira *Actions*: los tres jobs corren de nuevo.
-4. Cuando termine, `curl http://<ALB_DNS>/products` muestra el cambio.
+4. Cuando termine, `curl http://<ALB_DNS>/api/v1/products` muestra el cambio.
 5. ECS → Task definitions: ahora hay una revisión más, con el SHA nuevo. ECR: dos imágenes de la app más la `v1` manual.
 
 ---
 
-## Paso 4.6. Romper a propósito (extra)
+## Paso 3.6. Romper a propósito (extra)
 
 Son errores que puedes encontrar al trabajar con este pipeline. Cada uno se prueba en una rama o commit y se revierte.
 
@@ -389,7 +389,7 @@ Son errores que puedes encontrar al trabajar con este pipeline. Cada uno se prue
 | *Re-run all jobs* sobre un commit ya desplegado | `ImageTagAlreadyExistsException` en el push | La inmutabilidad de tags funciona. Solución: un commit nuevo, o *Re-run failed jobs*, que repite solo el job fallido y reutiliza la imagen ya subida |
 | Un `CONTAINER_NAME` distinto de `app` | El render falla al no encontrar el contenedor | El nombre del contenedor es el vínculo entre el workflow y la task definition |
 
-Un despliegue que arranca pero queda `unhealthy` y activa el rollback automático se deja para el módulo 6.
+Un despliegue que arranca pero queda `unhealthy` y activa el rollback automático queda fuera del alcance de este curso. Si te ocurre, es el circuit breaker que activaste en el paso 9 de la guía de consola el que vuelve a la versión anterior.
 
 ---
 
@@ -422,9 +422,9 @@ Un despliegue que arranca pero queda `unhealthy` y activa el rollback automátic
 - **Si tus pruebas no usan base de datos,** quita el contenedor de servicio de MySQL del job `test` para simplificarlo.
 - **Costos:** el service sigue encendido entre ejecuciones. Recuerda el paso 12 (destruir todo) al terminar.
 
-# Guía de Referencia: ¿Para qué sirve cada `uses:` en nuestro Pipeline de CI/CD?
+## Anexo: ¿para qué sirve cada `uses:` del pipeline?
 
-En términos sencillos, cada **`uses:`** es como importar una **librería o un bloque de código prefabricado**. En lugar de tener que escribir cientos de líneas de comando manuales en la terminal para conectarte a AWS o configurar Docker, alguien más (GitHub, Docker o AWS) ya hizo ese trabajo pesado por vos, lo empaquetó y te lo comparte para que lo ejecutes con una sola línea.
+En términos sencillos, cada **`uses:`** es como importar una **librería o un bloque de código prefabricado**. En lugar de tener que escribir cientos de líneas de comando manuales en la terminal para conectarte a AWS o configurar Docker, alguien más (GitHub, Docker o AWS) ya hizo ese trabajo pesado por ti, lo empaquetó y te lo comparte para que lo ejecutes con una sola línea.
 
 A continuación se detalla la función, el objetivo y las consideraciones de cambio para cada una de las acciones declaradas en el flujo:
 
@@ -434,7 +434,7 @@ A continuación se detalla la función, el objetivo y las consideraciones de cam
 
 * **¿Para qué sirve?:** Descarga el código fuente de tu repositorio dentro del servidor temporal de GitHub.
 * **El objetivo:** Los servidores donde corre tu pipeline arrancan 100% vacíos. Este paso equivale a hacer un `git clone` automático de tu proyecto para que las herramientas del flujo puedan leer tu `Dockerfile`, tus carpetas de código y tus archivos de configuración.
-* **Consideraciones para cambiarlo:** Cambialo solo cuando GitHub lance una nueva versión mayor (como una `@v7` o `@v8`) que optimice la velocidad de descarga o solucione problemas de seguridad en sistemas operativos de servidores nuevos.
+* **Consideraciones para cambiarlo:** Cámbialo solo cuando GitHub lance una nueva versión mayor (como una `@v7` o `@v8`) que optimice la velocidad de descarga o solucione problemas de seguridad en sistemas operativos de servidores nuevos.
 
 ---
 
@@ -442,7 +442,7 @@ A continuación se detalla la función, el objetivo y las consideraciones de cam
 
 * **¿Para qué sirve?:** Instala y configura el entorno de desarrollo de Java (JDK).
 * **El objetivo:** Como el servidor está completamente limpio al iniciar, no reconoce comandos de Java. Esta herramienta descarga e instala la versión exacta que le pidas (en tu caso, Java 21 de Temurin) para que el comando `./mvnw` pueda compilar y probar tu aplicación con éxito.
-* **Consideraciones para cambiarlo:** Revisá su repositorio si decidís cambiar la versión de Java de tu proyecto (por ejemplo, si en el futuro migrás tu app a Java 25 o 27) para asegurarte de que esa versión de la Action soporte los nuevos JDKs.
+* **Consideraciones para cambiarlo:** Revisa su repositorio si decides cambiar la versión de Java de tu proyecto (por ejemplo, si en el futuro migras tu app a Java 25 o 27) para asegurarte de que esa versión de la Action soporte los nuevos JDKs.
 
 ---
 
@@ -458,7 +458,7 @@ A continuación se detalla la función, el objetivo y las consideraciones de cam
 
 * **¿Para qué sirve?:** Autentica las herramientas de Docker dentro del registro privado de imágenes de AWS (Amazon ECR).
 * **El objetivo:** Permite que tu pipeline obtenga los permisos necesarios para poder subir (hacer `push`) la imagen de Docker empaquetada hacia el almacén de AWS.
-* **Consideraciones para cambiarlo:** Cambialo si cambia la API de Amazon ECR o si Docker actualiza sus protocolos de autenticación de seguridad globales.
+* **Consideraciones para cambiarlo:** Cámbialo si cambia la API de Amazon ECR o si Docker actualiza sus protocolos de autenticación de seguridad globales.
 
 ---
 
@@ -466,20 +466,20 @@ A continuación se detalla la función, el objetivo y las consideraciones de cam
 
 * **¿Para qué sirven?:** Configuran el motor avanzado de Docker (Buildx) y empaquetan tu aplicación en una imagen para luego subirla a AWS ECR.
 * **El objetivo:** Ejecutan el proceso automatizado de leer tu `Dockerfile`, empaquetar tu código compilado de Java y subir el contenedor empaquetado a la nube de AWS.
-* **Consideraciones para cambiarlo:** Estas herramientas avanzan muy rápido. Cambialas si necesitás compilar imágenes para diferentes arquitecturas de procesador (como compilar en servidores Intel para que corran en chips ARM de AWS Graviton) o si querés optimizar el tamaño y la velocidad del empaquetado.
+* **Consideraciones para cambiarlo:** Estas herramientas avanzan muy rápido. Cámbialas si necesitas compilar imágenes para diferentes arquitecturas de procesador (como compilar en servidores Intel para que corran en chips ARM de AWS Graviton) o si quieres optimizar el tamaño y la velocidad del empaquetado.
 
 ---
 
 ### 6. `aws-actions/amazon-ecs-render-task-definition@v1` y `amazon-ecs-deploy-task-definition@v2`
 
-* **¿Para qué sirven?:** Actualizan la configuración de tu contenedor en AWS (Task Definition) y le avisan a AWS ECS que apunte a la nueva versión que acabás de subir.
+* **¿Para qué sirven?:** Actualizan la configuración de tu contenedor en AWS (Task Definition) y le avisan a AWS ECS que apunte a la nueva versión que acabas de subir.
 * **El objetivo:** Realizan el despliegue final en producción. Toman el archivo `.aws/task-definition.json`, le inyectan la nueva etiqueta única de la imagen (`github.sha`) y le ordenan a AWS ECS que reinicie los servidores con el código nuevo de forma progresiva (despliegue *Rolling Update*) para que la app no deje de funcionar ni un solo segundo.
-* **Consideraciones para cambiarlo:** Monitorealas si cambiás la estructura de cómo manejás tus servicios en AWS ECS (por ejemplo, si pasás de usar ECS clásico a AWS Fargate).
+* **Consideraciones para cambiarlo:** Revísalas si cambias la forma en que ejecutas tus servicios en ECS (por ejemplo, si pasas de Fargate a instancias EC2).
 
 ---
 
-## 💡 Resumen de consideraciones generales para cambiarlos
+### 💡 Resumen de consideraciones generales para cambiarlos
 
 1. **Mantén la versión mayor (`@vX`):** Deja que GitHub maneje los parches menores. Si usas `@v6`, recibirás mejoras automáticas de rendimiento sin que se rompa la compatibilidad de tus comandos.
-2. **Si no está roto, no lo toques... salvo por seguridad:** Para tu primer despliegue, las versiones actuales de tu archivo son perfectas. Solo planificá actualizarlas cada 6 meses o un año para evitar que queden obsoletas (*deprecated*).
-3. **La prueba del error:** Recordá que si ponés una versión incorrecta o inexistente, GitHub Actions detendrá el proceso de inmediato y te dirá exactamente qué línea falló en la pestaña de monitoreo.
+2. **Si no está roto, no lo toques... salvo por seguridad:** Para tu primer despliegue, las versiones actuales de tu archivo son perfectas. Solo planifica actualizarlas cada 6 meses o un año para evitar que queden obsoletas (*deprecated*).
+3. **La prueba del error:** Recuerda que si pones una versión incorrecta o inexistente, GitHub Actions detendrá el proceso de inmediato y te dirá exactamente qué línea falló en la pestaña de monitoreo.
